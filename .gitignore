@@ -32,3 +32,4 @@ __pychache__
 *.dump
 tmp
 tmp.py
+.pio

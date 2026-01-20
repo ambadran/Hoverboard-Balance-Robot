@@ -26,6 +26,36 @@ static QuickPID my_pid(&pid_input, &pid_output, &pid_setpoint);
 // Global Status Structure
 static PID_Status_t pid_status = {0};
 
+// Shadow variable for Sample Time (since QuickPID lacks a getter)
+static uint32_t current_sample_time_us = PID_SAMPLE_TIME_US;
+
+/**
+ * @brief Helper function to calibrate zero offset.
+ *        Polls the IMU Update function directly since we are outside the main loop.
+ */
+static void MID_CONTROL_PID_Calibrate(void) {
+    float sum = 0.0f;
+    int samples_collected = 0;
+
+    // We assume the IMU hardware is already Init'd by Main.
+    
+    while (samples_collected < PID_CALIBRATION_SAMPLES) {
+        // Poll the hardware directly
+        // HAL_IMU_Update returns true if new FIFO data was processed
+        if (PID_INPUT_UPDATE_FUNC()) {
+            sum += PID_INPUT_FUNC();
+            samples_collected++;
+        } else {
+            // No new data yet, yield briefly to avoid hard lockup if this was RTOS
+            // In pure init (single thread), this is just a busy wait.
+            // Using platform delay to give time for DMP to fill FIFO (approx 5-10ms usually)
+            PLATFORM_DELAY_MS(1);
+        }
+    }
+    
+    zero_offset = sum / (float)PID_CALIBRATION_SAMPLES;
+}
+
 void MID_CONTROL_PID_Init(void) {
     // 1. (REMOVED) HAL Init is orchestrated by main.c
     // HAL_EEPROM_Init(); 
@@ -42,20 +72,7 @@ void MID_CONTROL_PID_Init(void) {
     }
 
     // 3. Run Zero-Calibration Routine
-    // We average N samples to find the starting pitch, assuming the user holds it "vertical" 
-    // or we are just determining the sensor bias.
-    // NOTE: This assumes the IMU is already initialized by MAIN before calling this.
-    float sum = 0.0f;
-    for (int i = 0; i < PID_CALIBRATION_SAMPLES; i++) {
-        sum += PID_INPUT_FUNC();
-        // Small delay to allow new samples (assuming ~5-10ms sample rate of IMU/Loop)
-        // Using a busy wait or system delay if available. 
-        // Since we are in Init phase, blocking is acceptable.
-        // We use a simple loop approx delay if generic delay not available, 
-        // but Arduino framework provides delay(ms).
-        PLATFORM_DELAY_MS(5); 
-    }
-    zero_offset = sum / (float)PID_CALIBRATION_SAMPLES;
+    MID_CONTROL_PID_Calibrate();
 
     // 4. Configure QuickPID
     my_pid.SetTunings(params.kp, params.ki, params.kd);
@@ -89,6 +106,7 @@ float MID_CONTROL_PID_Step(float target_setpoint) {
 
     // Compute PID
     // Returns true if new output was computed (time elapsed)
+    // Remeber this function assumes we are in timer mode. meaning the .Compute() will ALWAYS be true and will run when called.
     if (my_pid.Compute()) {
         // Output is updated in pid_output
         
@@ -133,18 +151,10 @@ void MID_CONTROL_PID_SetMode(MID_PID_Mode_t mode) {
 }
 
 void MID_CONTROL_PID_SetSampleTime(uint32_t us) {
+    current_sample_time_us = us;
     my_pid.SetSampleTimeUs(us);
 }
 
 uint32_t MID_CONTROL_PID_GetSampleTime(void) {
-    // QuickPID doesn't have a GetSampleTimeUs() in the public API 
-    // based on typical PID libraries, but it might.
-    // If not available, we can rely on our config, but dynamic changes require storage.
-    // For now, assume strict mapping to what we set.
-    // Note: To be safe with the library version, we should check availability.
-    // If library doesn't support getter, we must return a stored shadow variable.
-    // However, looking at the library source (dlloydev/QuickPID) usually reveals GetSampleTimeUs.
-    // If unsure, I will assume it exists, or shadow it. 
-    // Let's shadow it to be safe and fast.
-    return my_pid.GetSampleTimeUs();
+    return current_sample_time_us;
 }

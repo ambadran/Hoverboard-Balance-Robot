@@ -53,11 +53,37 @@ bool HAL_IMU_Init(void) {
         // Turn on the DMP
         mpu.setDMPEnabled(true);
 
+        // Reset FIFO to ensure we start with fresh data
+        mpu.resetFIFO();
+
         // Packet Size
         packet_size = mpu.dmpGetFIFOPacketSize();
         
         dmp_ready = true;
-        return true;
+
+        // Wait for first valid packet (Stabilization)
+        // Mandatory 3-second wait to allow DMP to converge (discard unstable initial readings)
+        unsigned long start_attempt = millis();
+        bool data_received = false;
+
+        /* delay(1000); */
+        
+        while ((millis() - start_attempt) < MPU_DMP_CALIPRATION_TIME) {
+            // Continuously drain the FIFO
+            if (mpu.dmpGetCurrentFIFOPacket(fifo_buffer)) {
+                // Keep updating internal state so the last one is the converged value
+                mpu.dmpGetQuaternion(&q, fifo_buffer);
+                mpu.dmpGetGravity(&gravity, &q);
+                mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+                current_pitch = ypr[1] * 180.0f / PI;
+                current_roll  = ypr[2] * 180.0f / PI;
+                data_received = true;
+            }
+            // Yield slightly to prevent Watchdog trigger (though delay(1) is usually implicit in Arduino loops, explicit yield is safer if tight)
+             delay(1); 
+        }
+
+        return data_received; // Return true if we successfully initialized and got data
     } else {
         // 1 = initial memory load failed
         // 2 = DMP configuration updates failed
@@ -65,8 +91,8 @@ bool HAL_IMU_Init(void) {
     }
 }
 
-void HAL_IMU_Update(void) {
-    if (!dmp_ready) return;
+bool HAL_IMU_Update(void) {
+    if (!dmp_ready) return false;
 
     // dmpGetCurrentFIFOPacket checks for FIFO count and reads if ready
     // It returns true if a packet was successfully read
@@ -81,7 +107,11 @@ void HAL_IMU_Update(void) {
         // ypr[0] = yaw, ypr[1] = pitch, ypr[2] = roll
         current_pitch = ypr[1] * 180.0f / PI;
         current_roll  = ypr[2] * 180.0f / PI;
+
+        return true;
     }
+
+    return false;
 }
 
 float HAL_IMU_GetPitch(void) {

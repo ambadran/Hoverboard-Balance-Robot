@@ -9,6 +9,7 @@
 #define MPU_OFF_X_ACCEL     -211
 #define MPU_OFF_Y_ACCEL     -831
 #define MPU_OFF_Z_ACCEL     1053
+#define MPU_DMP_CALIPRATION_TIME 10000 // 10 seconds!!
 
 // --- PID Configuration ---
 // Default Tunings (If EEPROM is empty)
@@ -29,6 +30,7 @@
 // This macro maps the logical PID input to a HAL function.
 #include "../src/1_HAL/imu_hal.h" // Include header to make the function visible if needed, strictly we just need the name here
 #define PID_INPUT_FUNC      HAL_IMU_GetPitch
+#define PID_INPUT_UPDATE_FUNC HAL_IMU_Update
 
 // Advanced PID Modes
 // Proportional on Error (0) or Measurement (1)

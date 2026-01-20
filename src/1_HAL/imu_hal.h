@@ -17,8 +17,9 @@ bool HAL_IMU_Init(void);
  * @brief Polls the MPU6050 DMP FIFO.
  *        Should be called frequently (e.g., in the control loop).
  *        If a full packet is received, it updates the internal orientation state.
+ * @return true if new data was read and state updated, false otherwise.
  */
-void HAL_IMU_Update(void);
+bool HAL_IMU_Update(void);
 
 /**
  * @brief Get the latest known Pitch angle.

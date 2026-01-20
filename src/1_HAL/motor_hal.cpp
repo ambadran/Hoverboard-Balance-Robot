@@ -42,11 +42,11 @@ void HAL_Motor_SetControl(int16_t speed_cmd, int16_t steer_cmd) {
     Serial2.write((uint8_t)(start & 0xFF));
     Serial2.write((uint8_t)((start >> 8) & 0xFF));
     
-    Serial2.write((uint8_t)(steer_cmd & 0xFF));
-    Serial2.write((uint8_t)((steer_cmd >> 8) & 0xFF));
-    
     Serial2.write((uint8_t)(speed_cmd & 0xFF));
     Serial2.write((uint8_t)((speed_cmd >> 8) & 0xFF));
+    
+    Serial2.write((uint8_t)(steer_cmd & 0xFF));
+    Serial2.write((uint8_t)((steer_cmd >> 8) & 0xFF));
     
     Serial2.write((uint8_t)(checksum & 0xFF));
     Serial2.write((uint8_t)((checksum >> 8) & 0xFF));

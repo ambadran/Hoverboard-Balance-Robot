@@ -11,7 +11,6 @@
 static HoverMotionData_t _feedback; // Stores latest valid data
 static uint8_t _rx_buffer[FRAME_LENGTH];
 static int _rx_idx = 0;
-static unsigned long _last_read_time = 0;
 
 // -- Implementation --
 

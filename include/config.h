@@ -20,8 +20,8 @@
 // Output Limits (Motor Command Range, typically -1000 to 1000 or similar)
 // Assuming normalized output or direct PWM scale. Let's start with safe limits.
 // Hoverboard firmware usually takes -1000 to 1000.
-#define PID_OUTPUT_MIN      -400.0f
-#define PID_OUTPUT_MAX      400.0f
+#define PID_OUTPUT_MIN      -1000.0f
+#define PID_OUTPUT_MAX      1000.0f
 
 // Calibration
 #define PID_CALIBRATION_SAMPLES 100 // Number of samples to average for zero-offset
@@ -30,6 +30,7 @@
 // This macro maps the logical PID input to a HAL function.
 #include "../src/1_HAL/imu_hal.h" // Include header to make the function visible if needed, strictly we just need the name here
 #define PID_INPUT_FUNC      HAL_IMU_GetPitch
+#define PID_INPUT_MULTIPLE -1.0f
 #define PID_INPUT_UPDATE_FUNC HAL_IMU_Update
 
 // Advanced PID Modes

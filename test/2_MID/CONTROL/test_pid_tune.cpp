@@ -5,16 +5,39 @@
 #include "../../../src/1_HAL/imu_hal.h"
 #include "../../../src/1_HAL/eeprom_hal.h"
 #include "../../../src/1_HAL/motor_hal.h"
+#include "../../../include/config.h"
 
 // --- Globals ---
 float input_pitch = 0.0f;
 float output_motor = 0.0f;
+float imu_offset = 0.0f;
 bool is_tuning_active = false;
-bool last_tuning_state = false;
+int16_t manual_speed_cmd = 0; // Persistent manual command
+uint32_t last_motor_write_time = 0; // For 200Hz Motor Pacing
 
 sTune tuner = sTune(&input_pitch, &output_motor, tuner.Mixed_PID, tuner.directIP, tuner.printALL);
 
 // --- Helper Functions ---
+
+void calibrate_imu() {
+    Serial.println("\n[INFO] Calibrating IMU... KEEP ROBOT STILL!");
+    
+    float sum = 0.0f;
+    int samples = PID_CALIBRATION_SAMPLES;
+    int count = 0;
+    
+    while (count < samples) {
+        if (HAL_IMU_Update()) {
+            sum += HAL_IMU_GetPitch();
+            count++;
+            if (count % 20 == 0) Serial.print("."); 
+        }
+        delay(5); // ~200Hz
+    }
+    
+    imu_offset = sum / (float)samples;
+    Serial.printf("\n[INFO] Calibration Complete. Samples: %d, Offset: %.2f\n", samples, imu_offset);
+}
 
 void apply_tuning_method(uint8_t method_idx) {
     switch(method_idx) {
@@ -75,7 +98,6 @@ void start_tuning_sequence() {
     );
     
     is_tuning_active = true;
-    last_tuning_state = true;
     Serial.println("[INFO] Tuner Active: Settling Phase Started.");
 }
 
@@ -83,7 +105,13 @@ void print_help() {
     Serial.println("\n--- PID Auto-Tuner (sTune) ---");
     Serial.println("Execution Commands:");
     Serial.println("  c       : Start Tuning Sequence (Hold robot!)");
+    Serial.println("  w       : Save Tuned Gains to EEPROM");
     Serial.println("  x       : Emergency Stop / Reset");
+    Serial.println("");
+    Serial.println("IMU & Motor Commands:");
+    Serial.println("  i       : Print IMU (Raw vs Offset-Corrected)");
+    Serial.println("  dVAL    : Drive Motor Manually (Continuous) (e.g. d200)");
+    Serial.println("  tVAL    : Pulse Motor (100ms Kick) (e.g. t400)");
     Serial.println("");
     Serial.println("Query Commands:");
     Serial.println("  r[0-11] : Read Parameter");
@@ -100,7 +128,7 @@ void print_help() {
 
 void setup() {
     Serial.begin(115200);
-    while(!Serial); // Wait for serial to be ready
+    while(!Serial) { delay(10); }; // Wait for serial to be ready
     delay(1000);
     
     print_help();
@@ -109,6 +137,9 @@ void setup() {
     if (!HAL_EEPROM_Init()) Serial.println("[ERROR] EEPROM Init Failed");
     if (!HAL_IMU_Init()) Serial.println("[ERROR] IMU Init Failed");
     if (!HAL_Motor_Init()) Serial.println("[ERROR] Motor Init Failed");
+
+    // Calibration
+    calibrate_imu();
 
     // Defaults
     apply_tuning_method(TUNER_DEFAULT_RULE);
@@ -119,43 +150,45 @@ void setup() {
 }
 
 void loop() {
-    // 1. Hardware Update (Always run for safety and UART flushing)
+    // 1. Hardware Update (Always run fast)
+    HAL_Motor_Process();
     HAL_IMU_Update();
-    input_pitch = HAL_IMU_GetPitch();
-    /* HAL_Motor_Process(); */
+    // Invert reading: Fall Forward must be Positive for standard PID logic
+    input_pitch = -1.0f * (HAL_IMU_GetPitch() - imu_offset);
 
-    // 2. Tuning Logic
+    // 2. Control Logic
     if (is_tuning_active) {
-        // Run() returns the current state
+        // Run sTune FAST so its state machine transitions properly
         uint8_t state = tuner.Run();
         
-        // Check if finished (state == tunings means it just calculated results)
-        // Note: sTune header says: enum TunerStatus {sample, test, tunings, runPid, timerPid};
-        // 2 is tunings.
-        if (state == 2) { 
+        if (state == 2) { // Tunings Ready
             is_tuning_active = false;
-            HAL_Motor_SetControl(0, 0);
+            manual_speed_cmd = 0;
             Serial.println("\n******************************************");
             Serial.println("* [SUCCESS] Auto-Tuning Completed!       *");
             Serial.println("******************************************");
             tuner.printResults();
-        } else {
-            // Actuate Motors with the output calculated by sTune
+        } 
+        else {
             // Safety Check
-            if (abs(input_pitch) > 45.0f) {
+            if (abs(input_pitch) > 60.0f) {
                 is_tuning_active = false;
-                output_motor = 0;
-                HAL_Motor_SetControl(0, 0);
-                Serial.println("\n[ERROR] TILT LIMIT EXCEEDED - TUNING ABORTED");
-            } else {
-                HAL_Motor_SetControl((int16_t)output_motor, 0);
+                manual_speed_cmd = 0;
+                Serial.println("\n[ERROR] TILT LIMIT EXCEEDED 60deg - TUNING ABORTED");
+            } 
+            else {
+                // Throttle Motor Writes to 200Hz (5ms)
+                if (micros() - last_motor_write_time >= 5000) {
+                    last_motor_write_time = micros();
+                    HAL_Motor_SetControl((int16_t)output_motor, 0);
+                }
             }
         }
     } else {
-        // Ensure motors are stopped when not tuning
-        if (last_tuning_state) {
-            HAL_Motor_SetControl(0, 0);
-            last_tuning_state = false;
+        // Idle / Manual Mode
+        if (micros() - last_motor_write_time >= 5000) {
+            last_motor_write_time = micros();
+            HAL_Motor_SetControl(manual_speed_cmd, 0);
         }
     }
 
@@ -173,9 +206,35 @@ void loop() {
         switch (cmdChar) {
             case 'h': print_help(); break;
             
+            case 'i': // IMU Monitoring
+                Serial.printf("IMU -> Raw: %.2f | Offset: %.2f | Inverted+Corrected: %.2f\n", 
+                    HAL_IMU_GetPitch(), imu_offset, input_pitch);
+                break;
+
+            case 'd': // Manual Drive
+                if (is_tuning_active) {
+                    Serial.println("[ERROR] Cannot drive manually during tuning!");
+                } else {
+                    manual_speed_cmd = (int16_t)val;
+                    Serial.printf("[INFO] Manual Drive Set: %d\n", manual_speed_cmd);
+                }
+                break;
+            
+            case 't': // Pulse Test (100ms kick)
+                if (is_tuning_active) {
+                    Serial.println("[ERROR] Cannot pulse during tuning!");
+                } else {
+                    if(val == 0) { val=400; }
+                    Serial.printf("[INFO] Pulsing Motor: %d for 100ms\n", val);
+                    HAL_Motor_SetControl((int16_t)val, 0);
+                    delay(100);
+                    HAL_Motor_SetControl(0, 0);
+                }
+                break;
+
             case 'x': 
                 is_tuning_active = false;
-                HAL_Motor_SetControl(0, 0);
+                manual_speed_cmd = 0;
                 Serial.println("[WARN] Emergency Stop / Reset Triggered");
                 break;
 
@@ -186,6 +245,33 @@ void loop() {
                     Serial.println("[WARN] Tuning already in progress!");
                 }
                 break;
+
+            case 'w': // Write to EEPROM
+            {
+                HAL_PID_Params_t old_params;
+                HAL_PID_Params_t new_params;
+                
+                // Load existing
+                HAL_EEPROM_LoadPID(&old_params);
+                
+                // Get new from tuner
+                tuner.GetAutoTunings(&new_params.kp, &new_params.ki, &new_params.kd);
+                
+                Serial.println("\n--- EEPROM UPDATE ---");
+                Serial.println("Metric | Existing | New (Tuned)");
+                Serial.println("-------------------------------");
+                Serial.printf("Kp     | %.5f | %.5f\n", old_params.kp, new_params.kp);
+                Serial.printf("Ki     | %.5f | %.5f\n", old_params.ki, new_params.ki);
+                Serial.printf("Kd     | %.5f | %.5f\n", old_params.kd, new_params.kd);
+                
+                if (new_params.kp == 0 && new_params.ki == 0 && new_params.kd == 0) {
+                    Serial.println("[ERROR] Tuned values are all zero. Run 'c' first!");
+                } else {
+                    HAL_EEPROM_SavePID(&new_params);
+                    Serial.println("[SUCCESS] New values saved to EEPROM.");
+                }
+                break;
+            }
 
             case 'r':
                 if (!hasVal) break;

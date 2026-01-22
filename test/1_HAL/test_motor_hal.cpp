@@ -4,7 +4,7 @@
 // -- State Variables --
 static int16_t target_speed = 0;
 static int16_t target_steer = 0;
-static unsigned long last_control_time = 0;
+static unsigned long last_process_time = 0;
 static unsigned long last_telemetry_time = 0;
 
 // -- Input Buffer --
@@ -26,13 +26,25 @@ void setup() {
         while(1); // Halt
     }
 
+    // 3. Enable Auto-Send (Keepalive)
+    // This allows the HAL to automatically resend the last command inside HAL_Motor_Process
+    HAL_Motor_SetAutoSend(true);
+    Serial.println("[INFO] Auto-Send Enabled");
+
     Serial.println("[HELP] Commands: v<val> (Speed), d<val> (Steer/Dir), x (Stop)");
     Serial.println("[HELP] Example: v100 -> Speed 100 | d50 -> Steer 50 | x -> Stop");
 }
 
 void loop() {
-    // 1. Process Incoming Data from Hoverboard
-    HAL_Motor_Process();
+    unsigned long now = millis();
+
+    // 1. Process HAL (RX + Auto-TX) @ 200Hz (5ms)
+    // Simulates the production control loop frequency.
+    // This handles both reading telemetry AND sending the keepalive command.
+    if (now - last_process_time >= 5) {
+        last_process_time = now;
+        HAL_Motor_Process();
+    }
 
     // 2. Non-Blocking Command Parser
     while (Serial.available()) {
@@ -45,18 +57,29 @@ void loop() {
                 char cmd = input_buffer[0];
                 int val = atoi(&input_buffer[1]); // Parse integer starting after command char
 
+                bool updated = false;
+
                 if (cmd == 'v') {
                     target_speed = (int16_t)val;
                     Serial.printf("\n[CMD] Set Speed: %d\n", target_speed);
+                    updated = true;
                 } 
                 else if (cmd == 'd') {
                     target_steer = (int16_t)val;
                     Serial.printf("\n[CMD] Set Steer: %d\n", target_steer);
+                    updated = true;
                 } 
                 else if (cmd == 'x') {
                     target_speed = 0;
                     target_steer = 0;
                     Serial.println("\n[CMD] STOP\n");
+                    updated = true;
+                }
+                
+                if (updated) {
+                    // Update the HAL. It will send immediately AND cache the value 
+                    // for the auto-send loop.
+                    HAL_Motor_SetControl(target_speed, target_steer);
                 }
                 
                 input_idx = 0; // Reset buffer
@@ -70,17 +93,7 @@ void loop() {
         }
     }
 
-    unsigned long now = millis();
-
-    // 3. Send Control Packets (Keepalive @ 50Hz / 20ms)
-    // CRITICAL: This must run constantly. If we stop sending for > ~500ms, 
-    // the hoverboard firmware will trigger a safety timeout and stop.
-    if (now - last_control_time >= 20) {
-        last_control_time = now;
-        HAL_Motor_SetControl(target_speed, target_steer);
-    }
-
-    // 4. Print Telemetry (10Hz / 100ms)
+    // 3. Print Telemetry (10Hz / 100ms)
     if (now - last_telemetry_time >= 100) {
         last_telemetry_time = now;
         

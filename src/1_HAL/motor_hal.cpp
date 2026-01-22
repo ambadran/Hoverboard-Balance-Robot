@@ -12,6 +12,11 @@ static HoverMotionData_t _feedback; // Stores latest valid data
 static uint8_t _rx_buffer[FRAME_LENGTH];
 static int _rx_idx = 0;
 
+// -- Auto-Send State --
+static int16_t _cached_speed = 0;
+static int16_t _cached_steer = 0;
+static bool _auto_send_enabled = false;
+
 // -- Implementation --
 
 extern "C" {
@@ -29,10 +34,19 @@ bool HAL_Motor_Init(void) {
     _rx_idx = 0;
     memset(&_feedback, 0, sizeof(HoverMotionData_t));
     
+    // Reset Auto-Send state
+    _cached_speed = 0;
+    _cached_steer = 0;
+    _auto_send_enabled = false;
+    
     return true; // Serial.begin always "succeeds" on ESP32 unless pins are invalid
 }
 
 void HAL_Motor_SetControl(int16_t speed_cmd, int16_t steer_cmd) {
+    // Update cache
+    _cached_speed = speed_cmd;
+    _cached_steer = steer_cmd;
+
     uint16_t start = START_FRAME;
     uint16_t checksum = (uint16_t)(start ^ steer_cmd ^ speed_cmd);
 
@@ -51,14 +65,18 @@ void HAL_Motor_SetControl(int16_t speed_cmd, int16_t steer_cmd) {
     Serial2.write((uint8_t)((checksum >> 8) & 0xFF));
 }
 
+void HAL_Motor_SetAutoSend(bool enabled) {
+    _auto_send_enabled = enabled;
+}
+
 void HAL_Motor_Process(void) {
+    // 1. Process Incoming Data (RX)
     while (Serial2.available()) {
         uint8_t ch = Serial2.read();
 
-        // 1. Sliding window / State machine to find header
+        // Sliding window / State machine to find header
         if (_rx_idx == 0) {
             // Looking for first byte of Start (0xCD) - Little Endian logic for 0xABCD
-            // 0xABCD in Little Endian is: Byte0=0xCD, Byte1=0xAB
             if (ch == (uint8_t)(START_FRAME & 0xFF)) {
                 _rx_buffer[_rx_idx++] = ch;
             }
@@ -69,9 +87,7 @@ void HAL_Motor_Process(void) {
                 _rx_buffer[_rx_idx++] = ch;
             } else {
                 // Mismatch, reset to index 0. 
-                // However, if this byte was 0xCD, it might be the start of a new frame, 
-                // so we re-evaluate it.
-                 _rx_idx = 0;
+                _rx_idx = 0;
                  if (ch == (uint8_t)(START_FRAME & 0xFF)) {
                      _rx_buffer[_rx_idx++] = ch;
                  }
@@ -105,8 +121,6 @@ void HAL_Motor_Process(void) {
                     _feedback.batVoltage = bat_rx;
                     _feedback.boardTemp = temp_rx;
                     _feedback.cmdLed = cmdLed_rx;
-                } else {
-                    // Checksum Failed - Ignore frame
                 }
 
                 // Reset for next frame
@@ -114,21 +128,22 @@ void HAL_Motor_Process(void) {
             }
         }
     }
+
+    // 2. Auto-Send Logic (Keep-Alive)
+    if (_auto_send_enabled) {
+        HAL_Motor_SetControl(_cached_speed, _cached_steer);
+    }
 }
 
 HoverMotionData_t HAL_Motor_GetFeedback(void) {
-    // Returns a copy of the structure (Atomic read for struct? No, but reasonably safe on single core logic if called from same task. 
-    // If multithreaded (Core 1 vs Core 0), this needs a lock, but HAL is usually called by one Worker.)
     return _feedback;
 }
 
 float HAL_Motor_GetVoltage(void) {
-    // ADC Value is usually Volts * 100
     return (float)_feedback.batVoltage / 100.0f;
 }
 
 float HAL_Motor_GetTemperature(void) {
-    // ADC Value is usually DegC * 10
     return (float)_feedback.boardTemp / 10.0f;
 }
 

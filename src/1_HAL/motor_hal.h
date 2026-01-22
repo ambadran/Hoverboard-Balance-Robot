@@ -34,6 +34,7 @@ bool HAL_Motor_Init(void);
 
 /**
  * @brief Sends speed and steer commands to the motor controller.
+ * Also updates the internal cached values used for auto-sending.
  * 
  * @param speed_cmd Desired speed (-1000 to 1000).
  * @param steer_cmd Desired steer/turn rate (-1000 to 1000).
@@ -41,8 +42,18 @@ bool HAL_Motor_Init(void);
 void HAL_Motor_SetControl(int16_t speed_cmd, int16_t steer_cmd);
 
 /**
+ * @brief Configures the auto-send (keep-alive) behavior.
+ * If enabled, HAL_Motor_Process() will automatically resend the last 
+ * set control values to the motor.
+ * 
+ * @param enabled true to enable continuous sending, false to disable.
+ */
+void HAL_Motor_SetAutoSend(bool enabled);
+
+/**
  * @brief Processing function to be called periodically (e.g., in the control loop).
  * Reads bytes from the UART buffer and updates the internal feedback state.
+ * If AutoSend is enabled, it also resends the last control command.
  */
 void HAL_Motor_Process(void);
 

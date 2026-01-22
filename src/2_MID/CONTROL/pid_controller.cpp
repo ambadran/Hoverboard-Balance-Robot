@@ -97,7 +97,7 @@ void MID_CONTROL_PID_Init(void) {
     my_pid.SetAntiWindupMode(aw_mode);
 }
 
-float MID_CONTROL_PID_Step(float target_setpoint) {
+bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr) {
     // Update Bindings
     pid_setpoint = target_setpoint;
  
@@ -107,8 +107,9 @@ float MID_CONTROL_PID_Step(float target_setpoint) {
 
     // Compute PID
     // Returns true if new output was computed (time elapsed)
-    // Remeber this function assumes we are in timer mode. meaning the .Compute() will ALWAYS be true and will run when called.
-    if (my_pid.Compute()) {
+    bool computed = my_pid.Compute();
+
+    if (computed) {
         // Output is updated in pid_output
         
         // Update Status for Monitoring
@@ -122,8 +123,12 @@ float MID_CONTROL_PID_Step(float target_setpoint) {
         pid_status.i_term = my_pid.GetIterm();
         pid_status.d_term = my_pid.GetDterm();
     }
+
+    if (pid_output_ptr) {
+        *pid_output_ptr = pid_output;
+    }
     
-    return pid_output;
+    return computed;
 }
 
 void MID_CONTROL_PID_SetGains(float kp, float ki, float kd) {
@@ -158,4 +163,9 @@ void MID_CONTROL_PID_SetSampleTime(uint32_t us) {
 
 uint32_t MID_CONTROL_PID_GetSampleTime(void) {
     return current_sample_time_us;
+}
+
+void MID_CONTROL_PID_Reset(void) {
+    my_pid.Reset();
+    my_pid.Initialize();
 }

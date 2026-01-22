@@ -22,9 +22,10 @@ void MID_CONTROL_PID_Init(void);
  * @brief Executes one step of the PID control loop.
  * 
  * @param target_setpoint The desired setpoint (usually 0.0 for balancing).
- * @return The calculated PID output.
+ * @param pid_output_ptr Pointer to store the calculated PID output.
+ * @return True if a new value was computed, false otherwise.
  */
-float MID_CONTROL_PID_Step(float target_setpoint);
+bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr);
 
 /**
  * @brief Dynamic Gain Scheduling/Tuning.
@@ -64,6 +65,15 @@ void MID_CONTROL_PID_SetSampleTime(uint32_t us);
  * @return Sample time in microseconds.
  */
 uint32_t MID_CONTROL_PID_GetSampleTime(void);
+
+/**
+ * @brief Resets the PID internal state.
+ * 
+ * Clears the integral term and resets the previous input to the current input.
+ * Call this when transitioning from IDLE to BALANCING to prevent derivative kick
+ * or integral windup from previous states.
+ */
+void MID_CONTROL_PID_Reset(void);
 
 #ifdef __cplusplus
 }

@@ -8,8 +8,6 @@
 static float target_setpoint = 0.0f;
 static bool auto_run = false;
 static bool enable_motors = false;
-static uint32_t last_step_time = 0;
-static uint32_t step_interval_us = 5000; // Default 5ms (200Hz)
 
 // --- Test Logic ---
 
@@ -18,14 +16,16 @@ void print_help() {
     Serial.println("Logic Commands:");
     Serial.println("  kP,I,D  : Set PID Gains (Kp, Ki, Kd)");
     Serial.println("  tVAL    : Set persistent Target Setpoint (e.g. t0.0)");
+    Serial.println("  dVAL    : Manual Motor Drive (e.g. d200). Only when Auto-Run OFF.");
     Serial.println("  mMODE   : PID Internal Mode (0=MANUAL, 1=AUTO, 2=TIMER)");
     Serial.println("  stVAL   : PID Sample Time in microseconds (e.g. st5000)");
     Serial.println("");
     Serial.println("Execution Commands:");
-    Serial.println("  s       : Single Step (Run PID once and stop)");
-    Serial.println("  ar<0|1> : Auto-Run Toggle (1 = Start 200Hz Loop, 0 = Stop)");
+    Serial.println("  s       : Single Step (Try to run PID once)");
+    Serial.println("  ar<0|1> : Auto-Run Toggle (Poll PID continuously)");
     Serial.println("  dr<0|1> : Motor Drive Toggle (1 = Enable PID->Motor, 0 = Disable)");
-    Serial.println("  r       : Reset/Re-calibrate PID");
+    Serial.println("  r       : Re-Initialize PID (Full Recalibration)");
+    Serial.println("  z       : Zero/Reset PID State & Motors (Fast Stop)");
     Serial.println("  ?       : Print current internal state");
     Serial.println("  h       : Print this help menu");
 }
@@ -58,7 +58,7 @@ void setup() {
 
     // Initialize PID
     MID_CONTROL_PID_Init();
-    // Default to Automatic for our simulated loop
+    // Default to Automatic (Timer Mode in implementation) for our simulated loop
     MID_CONTROL_PID_SetMode(MID_PID_MODE_AUTOMATIC);
     
     Serial.println("[INFO] PID Initialized. Default Mode: AUTOMATIC. Auto-Run: OFF. Motors: OFF");
@@ -77,28 +77,18 @@ void loop() {
     HAL_Motor_Process(); // Keep UART feedback buffer clean
 
     // Handle Auto-Run Logic
-    // We simulate the RTOS task frequency here using micros()
+    // In Auto-Run, we constantly poll the PID. It decides when to compute based on its internal timer.
     if (auto_run) {
-        if (micros() - last_step_time >= step_interval_us) {
-            last_step_time = micros();
-            
-            // Execute Control Logic
-            float output_f = MID_CONTROL_PID_Step(target_setpoint);
+        float output_val = 0.0f;
+        if (MID_CONTROL_PID_Step(target_setpoint, &output_val)) {
+            // A new PID step was computed!
             
             // Actuate Motors if Enabled
             if (enable_motors) {
-                // Safety Clamp typically happens in PID limits, but good to be explicit for int16 conversion
-                // PID output is configured to +/- 400 in config.h
-                int16_t speed_cmd = (int16_t)output_f;
+                int16_t speed_cmd = (int16_t)output_val;
                 HAL_Motor_SetControl(speed_cmd, 0); // 0 Steer for balancing
-            } else {
-                // Ensure motors are stopped if flag is off but loop is running
-                // (Optional: Depends if we want to coast or brake. Usually 0 is safer here)
-                // However, we shouldn't spam 0 if we assume they are off.
-                // But to be safe, if we toggled off, we might want to send 0 once.
-                // For this simple test, we just don't send commands.
-            }
-
+            } 
+            
             print_status_csv();
         }
     }
@@ -117,7 +107,6 @@ void loop() {
         if (cmdStr.startsWith("st")) {
             uint32_t us = valStr.substring(1).toInt(); // Skip 't'
             if (us > 0) {
-                step_interval_us = us;
                 MID_CONTROL_PID_SetSampleTime(us);
                 Serial.printf("[INFO] Sample Time Set: %u us\n", us);
             }
@@ -127,7 +116,11 @@ void loop() {
         if (cmdStr.startsWith("ar")) {
             int state = valStr.substring(1).toInt(); // Skip 'r'
             auto_run = (state == 1);
-            Serial.printf("[INFO] Auto-Run: %s\n", auto_run ? "ON" : "OFF");
+            if (!auto_run) {
+                // STOP Logic: When stopping the loop, clear the motor command
+                HAL_Motor_SetControl(0, 0);
+            }
+            Serial.printf("[INFO] Auto-Run: %s. Motors Zeroed.\n", auto_run ? "ON" : "OFF");
             return;
         }
 
@@ -138,7 +131,7 @@ void loop() {
                 // Failsafe: Stop immediately when disabling
                 HAL_Motor_SetControl(0, 0);
             }
-            Serial.printf("[INFO] Motor Drive: %s\n", enable_motors ? "ENABLED" : "DISABLED");
+            Serial.printf("[INFO] Motor Drive: %s. Motors Zeroed.\n", enable_motors ? "ENABLED" : "DISABLED");
             return;
         }
 
@@ -170,6 +163,16 @@ void loop() {
                 target_setpoint = valStr.toFloat();
                 Serial.printf("[INFO] Target Set: %.2f\n", target_setpoint);
                 break;
+
+            case 'd': // Manual Drive
+                if (auto_run) {
+                    Serial.println("[ERROR] Cannot drive manually while Auto-Run is ON!");
+                } else {
+                    int16_t manual_speed = (int16_t)valStr.toInt();
+                    HAL_Motor_SetControl(manual_speed, 0);
+                    Serial.printf("[INFO] Manual Motor Drive: %d\n", manual_speed);
+                }
+                break;
             
             case 'm': // Set Mode
             {
@@ -181,26 +184,39 @@ void loop() {
                 break;
             }
 
-            case 's': // Step (Manual Single Shot)
+            case 's': // Step (Single Shot)
             {
                 // Optional target override: s<Target>
                 if (valStr.length() > 0) target_setpoint = valStr.toFloat();
                 
-                float output = MID_CONTROL_PID_Step(target_setpoint);
-                print_status_csv();
+                float output_val = 0.0f;
+                bool computed = MID_CONTROL_PID_Step(target_setpoint, &output_val);
                 
-                // Also drive if enabled, even in single step
-                if (enable_motors) {
-                    HAL_Motor_SetControl((int16_t)output, 0);
+                if (computed) {
+                    print_status_csv();
+                    // Also drive if enabled, even in single step
+                    if (enable_motors) {
+                        HAL_Motor_SetControl((int16_t)output_val, 0);
+                    }
+                    Serial.println(" [COMPUTED]");
+                } else {
+                    PID_Status_t status = MID_CONTROL_PID_GetStatus();
+                    Serial.printf("SKIPPED (Wait for Timer). Last Out: %.2f\n", status.output);
                 }
-                
-                Serial.println(); // Newline
                 break;
             }
             
-            case 'r': // Reset
+            case 'r': // Reset Full (Re-Init)
+                HAL_Motor_SetControl(0, 0); // Safety
                 MID_CONTROL_PID_Init();
                 Serial.println("[INFO] PID Re-Initialized (Calibration Ran)");
+                break;
+
+            case 'z': // Zero/Reset State
+                MID_CONTROL_PID_Reset();
+                HAL_Motor_SetControl(0, 0); // Safety
+                target_setpoint = 0.0f;
+                Serial.println("[INFO] PID State Reset (Integral=0). Motors Zeroed. Target=0.");
                 break;
                 
             case '?': // Status

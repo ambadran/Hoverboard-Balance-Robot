@@ -39,6 +39,24 @@ bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr);
 void MID_CONTROL_PID_SetGains(float kp, float ki, float kd);
 
 /**
+ * @brief Get the current Proportional Gain.
+ * @return float Kp.
+ */
+float MID_CONTROL_PID_GetKp(void);
+
+/**
+ * @brief Get the current Integral Gain.
+ * @return float Ki.
+ */
+float MID_CONTROL_PID_GetKi(void);
+
+/**
+ * @brief Get the current Derivative Gain.
+ * @return float Kd.
+ */
+float MID_CONTROL_PID_GetKd(void);
+
+/**
  * @brief Get the latest status of the PID controller.
  * 
  * @return PID_Status_t structure containing current internals (Error, Terms, etc.).
@@ -51,6 +69,13 @@ PID_Status_t MID_CONTROL_PID_GetStatus(void);
  * @param mode The desired mode (MANUAL, AUTOMATIC, TIMER).
  */
 void MID_CONTROL_PID_SetMode(MID_PID_Mode_t mode);
+
+/**
+ * @brief Get the current PID Controller Mode.
+ * 
+ * @return MID_PID_Mode_t The current mode.
+ */
+MID_PID_Mode_t MID_CONTROL_PID_GetMode(void);
 
 /**
  * @brief Set the PID Sample Time.

@@ -105,6 +105,28 @@ bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr) {
     // The PID works on the error: Setpoint - Input
     pid_input = PID_INPUT_MULTIPLE*(PID_INPUT_FUNC() - zero_offset);
 
+    // --- SAFETY CHECK: Tilt Limit ---
+    if (fabs(pid_input) > PID_TILT_LIMIT_DEG) {
+        // Force Stop
+        pid_output = 0.0f;
+        if (pid_output_ptr) *pid_output_ptr = 0.0f;
+        
+        // Reset PID internals so it doesn't "wind up" or kick when we recover
+        MID_CONTROL_PID_Reset();
+        
+        // Update Status for Monitoring
+        pid_status.setpoint = pid_setpoint;
+        pid_status.input = pid_input;
+        pid_status.output = 0.0f;
+        pid_status.error = pid_setpoint - pid_input;
+        pid_status.p_term = 0.0f;
+        pid_status.i_term = 0.0f;
+        pid_status.d_term = 0.0f;
+        
+        return true; // We processed the step (Safety Triggered)
+    }
+    // --------------------------------
+
     // Compute PID
     // Returns true if new output was computed (time elapsed)
     bool computed = my_pid.Compute();
@@ -138,6 +160,18 @@ void MID_CONTROL_PID_SetGains(float kp, float ki, float kd) {
     // The directive didn't explicitly say "save on set", only "load on init".
 }
 
+float MID_CONTROL_PID_GetKp(void) {
+    return my_pid.GetKp();
+}
+
+float MID_CONTROL_PID_GetKi(void) {
+    return my_pid.GetKi();
+}
+
+float MID_CONTROL_PID_GetKd(void) {
+    return my_pid.GetKd();
+}
+
 PID_Status_t MID_CONTROL_PID_GetStatus(void) {
     return pid_status;
 }
@@ -156,6 +190,20 @@ void MID_CONTROL_PID_SetMode(MID_PID_Mode_t mode) {
     }
 }
 
+MID_PID_Mode_t MID_CONTROL_PID_GetMode(void) {
+    uint8_t mode = my_pid.GetMode();
+    switch (mode) {
+        case (uint8_t)QuickPID::Control::manual:
+            return MID_PID_MODE_MANUAL;
+        case (uint8_t)QuickPID::Control::automatic:
+            return MID_PID_MODE_AUTOMATIC;
+        case (uint8_t)QuickPID::Control::timer:
+            return MID_PID_MODE_TIMER;
+        default:
+            return MID_PID_MODE_MANUAL;
+    }
+}
+
 void MID_CONTROL_PID_SetSampleTime(uint32_t us) {
     current_sample_time_us = us;
     my_pid.SetSampleTimeUs(us);
@@ -166,6 +214,12 @@ uint32_t MID_CONTROL_PID_GetSampleTime(void) {
 }
 
 void MID_CONTROL_PID_Reset(void) {
+    // Force clear the static bindings to ensure a true "Cold Start".
+    // This prevents QuickPID's Bumpless Transfer from reloading the 
+    // last output into the Integral term.
+    pid_output = 0.0f;
+    pid_input = 0.0f;
+    pid_setpoint = 0.0f;
+
     my_pid.Reset();
-    my_pid.Initialize();
 }

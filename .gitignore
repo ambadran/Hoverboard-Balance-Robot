@@ -33,3 +33,4 @@ __pychache__
 tmp
 tmp.py
 .pio
+.aider*

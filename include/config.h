@@ -25,6 +25,8 @@
 
 // Calibration
 #define PID_CALIBRATION_SAMPLES 100 // Number of samples to average for zero-offset
+                                    //
+#define PID_TILT_LIMIT_DEG 25.0f
 
 // Input Mapping
 // This macro maps the logical PID input to a HAL function.

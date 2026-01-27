@@ -11,6 +11,9 @@ static float pid_input = 0.0f;
 static float pid_output = 0.0f;
 static float pid_setpoint = 0.0f;
 
+// Smoothing Filter State
+static float last_smoothed_input = 0.0f;
+
 // Calibration Offset
 static float zero_offset = 0.0f;
 
@@ -102,8 +105,16 @@ bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr) {
     pid_setpoint = target_setpoint;
  
     // Read Input and apply offset
-    // The PID works on the error: Setpoint - Input
-    pid_input = PID_INPUT_MULTIPLE*(PID_INPUT_FUNC() - zero_offset);
+    float raw_input = PID_INPUT_MULTIPLE*(PID_INPUT_FUNC() - zero_offset);
+    
+    // --- INPUT FILTERING (Low Pass) ---
+    // Smooths out sensor noise to prevent Derivative (D-Term) spikes.
+    // Initialization check (optional, but good for safety)
+    if (last_smoothed_input == 0.0f && raw_input != 0.0f) last_smoothed_input = raw_input;
+    
+    pid_input = (PID_FILTER_ALPHA * raw_input) + ((1.0f - PID_FILTER_ALPHA) * last_smoothed_input);
+    last_smoothed_input = pid_input;
+    // ----------------------------------
 
     // --- SAFETY CHECK: Tilt Limit ---
     if (fabs(pid_input) > PID_TILT_LIMIT_DEG) {
@@ -113,6 +124,9 @@ bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr) {
         
         // Reset PID internals so it doesn't "wind up" or kick when we recover
         MID_CONTROL_PID_Reset();
+        
+        // Reset Filter
+        last_smoothed_input = 0.0f;
         
         // Update Status for Monitoring
         pid_status.setpoint = pid_setpoint;
@@ -132,6 +146,19 @@ bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr) {
     bool computed = my_pid.Compute();
 
     if (computed) {
+        // --- DEADZONE COMPENSATION ---
+        // Hoverboard motors have high static friction.
+        // We boost the output to jump over this friction zone immediately.
+        // BUT, we guard this with a deadband to prevent noise-induced chatter (wiggling).
+        if (fabs(pid_setpoint - pid_input) > PID_DEADBAND) {
+            if (pid_output > 0.0f) {
+                pid_output += PID_MIN_POWER;
+            } else if (pid_output < 0.0f) {
+                pid_output -= PID_MIN_POWER;
+            }
+        }
+        // -----------------------------
+
         // Output is updated in pid_output
         
         // Update Status for Monitoring
@@ -220,6 +247,9 @@ void MID_CONTROL_PID_Reset(void) {
     pid_output = 0.0f;
     pid_input = 0.0f;
     pid_setpoint = 0.0f;
+    
+    // Reset Filter
+    last_smoothed_input = 0.0f;
 
     my_pid.Reset();
 }

@@ -20,7 +20,7 @@ static unsigned long run_duration = 5000; // Default 5 seconds
 static unsigned long start_delay_ms = 2000; // Default 3 seconds
 
 // Output Format
-static bool use_csv_format = true;
+static bool use_csv_format = false;
 
 // Jitter Monitor Globals
 static uint32_t max_loop_time_us = 0;

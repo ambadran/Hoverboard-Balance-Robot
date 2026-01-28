@@ -25,6 +25,9 @@ void HAL_EEPROM_SavePID(const HAL_PID_Params_t* params) {
     write_float_no_commit(EEPROM_ADDR_KP, params->kp);
     write_float_no_commit(EEPROM_ADDR_KI, params->ki);
     write_float_no_commit(EEPROM_ADDR_KD, params->kd);
+    write_float_no_commit(EEPROM_ADDR_MIN_POWER, params->min_power);
+    write_float_no_commit(EEPROM_ADDR_DEADBAND, params->deadband);
+    write_float_no_commit(EEPROM_ADDR_LPF_ALPHA, params->lpf_alpha);
     
     // Commit once at the end
     commit_changes();
@@ -37,6 +40,9 @@ void HAL_EEPROM_LoadPID(HAL_PID_Params_t* params) {
     params->kp = read_float(EEPROM_ADDR_KP);
     params->ki = read_float(EEPROM_ADDR_KI);
     params->kd = read_float(EEPROM_ADDR_KD);
+    params->min_power = read_float(EEPROM_ADDR_MIN_POWER);
+    params->deadband = read_float(EEPROM_ADDR_DEADBAND);
+    params->lpf_alpha = read_float(EEPROM_ADDR_LPF_ALPHA);
 }
 
 // --- Granular Accessors ---
@@ -73,6 +79,39 @@ void HAL_EEPROM_SetKd(float val) {
 
 float HAL_EEPROM_GetKd(void) {
     return read_float(EEPROM_ADDR_KD);
+}
+
+void HAL_EEPROM_SetMinPower(float val) {
+    if (read_float(EEPROM_ADDR_MIN_POWER) != val) {
+        write_float_no_commit(EEPROM_ADDR_MIN_POWER, val);
+        commit_changes();
+    }
+}
+
+float HAL_EEPROM_GetMinPower(void) {
+    return read_float(EEPROM_ADDR_MIN_POWER);
+}
+
+void HAL_EEPROM_SetDeadband(float val) {
+    if (read_float(EEPROM_ADDR_DEADBAND) != val) {
+        write_float_no_commit(EEPROM_ADDR_DEADBAND, val);
+        commit_changes();
+    }
+}
+
+float HAL_EEPROM_GetDeadband(void) {
+    return read_float(EEPROM_ADDR_DEADBAND);
+}
+
+void HAL_EEPROM_SetLpfAlpha(float val) {
+    if (read_float(EEPROM_ADDR_LPF_ALPHA) != val) {
+        write_float_no_commit(EEPROM_ADDR_LPF_ALPHA, val);
+        commit_changes();
+    }
+}
+
+float HAL_EEPROM_GetLpfAlpha(void) {
+    return read_float(EEPROM_ADDR_LPF_ALPHA);
 }
 
 // --- Private Helper Implementations ---

@@ -13,6 +13,9 @@ typedef struct {
     float kp;
     float ki;
     float kd;
+    float min_power;  // Deadzone Compensation (e.g., 60.0)
+    float deadband;   // Silence Zone (e.g., 0.15)
+    float lpf_alpha;  // Derivative Filter (e.g., 0.6)
 } HAL_PID_Params_t;
 
 /**

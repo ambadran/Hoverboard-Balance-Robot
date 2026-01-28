@@ -11,11 +11,19 @@ static float pid_input = 0.0f;
 static float pid_output = 0.0f;
 static float pid_setpoint = 0.0f;
 
-// Smoothing Filter State
-static float last_smoothed_input = 0.0f;
-
 // Calibration Offset
 static float zero_offset = 0.0f;
+
+// --- Custom Derivative State ---
+static float internal_kd = 0.0f;
+static float last_pid_input = 0.0f;
+static float last_derivative_rate = 0.0f;
+static uint32_t last_step_micros = 0;
+
+// --- Advanced Tuning Runtime Config ---
+static float runtime_min_power = PID_MIN_POWER;
+static float runtime_deadband = PID_DEADBAND;
+static float runtime_lpf_alpha = PID_DERIVATIVE_LPF_ALPHA;
 
 // The QuickPID Object
 // p, i, d, POn, DOn
@@ -77,9 +85,25 @@ void MID_CONTROL_PID_Init(void) {
         params.kp = PID_DEFAULT_KP;
         params.ki = PID_DEFAULT_KI;
         params.kd = PID_DEFAULT_KD;
+        params.min_power = PID_MIN_POWER;
+        params.deadband = PID_DEADBAND;
+        params.lpf_alpha = PID_DERIVATIVE_LPF_ALPHA;
     }
-    // set the tunings
-    my_pid.SetTunings(params.kp, params.ki, params.kd);
+    
+    // Store Kd internally, pass 0 to QuickPID
+    internal_kd = params.kd;
+    
+    // Load Advanced Tuning
+    runtime_min_power = isnan(params.min_power) ? PID_MIN_POWER : params.min_power;
+    runtime_deadband = isnan(params.deadband) ? PID_DEADBAND : params.deadband;
+    runtime_lpf_alpha = isnan(params.lpf_alpha) ? PID_DERIVATIVE_LPF_ALPHA : params.lpf_alpha;
+
+    my_pid.SetTunings(params.kp, params.ki, 0.0f);
+    
+    // Reset Custom D-State
+    last_pid_input = 0.0f;
+    last_derivative_rate = 0.0f;
+    last_step_micros = micros();
 
     // Set the direction
     my_pid.SetControllerDirection(QuickPID::Action::reverse);
@@ -105,16 +129,7 @@ bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr) {
     pid_setpoint = target_setpoint;
  
     // Read Input and apply offset
-    float raw_input = PID_INPUT_MULTIPLE*(PID_INPUT_FUNC() - zero_offset);
-    
-    // --- INPUT FILTERING (Low Pass) ---
-    // Smooths out sensor noise to prevent Derivative (D-Term) spikes.
-    // Initialization check (optional, but good for safety)
-    if (last_smoothed_input == 0.0f && raw_input != 0.0f) last_smoothed_input = raw_input;
-    
-    pid_input = (PID_FILTER_ALPHA * raw_input) + ((1.0f - PID_FILTER_ALPHA) * last_smoothed_input);
-    last_smoothed_input = pid_input;
-    // ----------------------------------
+    pid_input = PID_INPUT_MULTIPLE*(PID_INPUT_FUNC() - zero_offset);
 
     // --- SAFETY CHECK: Tilt Limit ---
     if (fabs(pid_input) > PID_TILT_LIMIT_DEG) {
@@ -124,9 +139,6 @@ bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr) {
         
         // Reset PID internals so it doesn't "wind up" or kick when we recover
         MID_CONTROL_PID_Reset();
-        
-        // Reset Filter
-        last_smoothed_input = 0.0f;
         
         // Update Status for Monitoring
         pid_status.setpoint = pid_setpoint;
@@ -146,15 +158,40 @@ bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr) {
     bool computed = my_pid.Compute();
 
     if (computed) {
+        // --- CUSTOM D-TERM CALCULATION ---
+        // QuickPID D-term is disabled (set to 0). We calculate it manually here
+        // to apply the Low Pass Filter (LPF) ONLY to the derivative component.
+        uint32_t now = micros();
+        float dt = (now - last_step_micros) / 1000000.0f;
+        last_step_micros = now;
+
+        float d_term = 0.0f;
+
+        if (dt > 0.0f && dt < 0.1f) { // Valid dt check
+            float raw_rate = (pid_input - last_pid_input) / dt;
+            
+            // Apply LPF to the Rate
+            float alpha = runtime_lpf_alpha;
+            float smoothed_rate = (alpha * raw_rate) + ((1.0f - alpha) * last_derivative_rate);
+            last_derivative_rate = smoothed_rate;
+            
+            d_term = internal_kd * smoothed_rate;
+        }
+        last_pid_input = pid_input;
+        
+        // Add D-Term to the P+I output from QuickPID
+        pid_output += d_term;
+        // ---------------------------------
+
         // --- DEADZONE COMPENSATION ---
         // Hoverboard motors have high static friction.
         // We boost the output to jump over this friction zone immediately.
         // BUT, we guard this with a deadband to prevent noise-induced chatter (wiggling).
-        if (fabs(pid_setpoint - pid_input) > PID_DEADBAND) {
+        if (fabs(pid_setpoint - pid_input) > runtime_deadband) {
             if (pid_output > 0.0f) {
-                pid_output += PID_MIN_POWER;
+                pid_output += runtime_min_power;
             } else if (pid_output < 0.0f) {
-                pid_output -= PID_MIN_POWER;
+                pid_output -= runtime_min_power;
             }
         }
         // -----------------------------
@@ -170,7 +207,7 @@ bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr) {
         // Access internal terms
         pid_status.p_term = my_pid.GetPterm();
         pid_status.i_term = my_pid.GetIterm();
-        pid_status.d_term = my_pid.GetDterm();
+        pid_status.d_term = d_term; // Manual D-Term
     }
 
     if (pid_output_ptr) {
@@ -181,10 +218,8 @@ bool MID_CONTROL_PID_Step(float target_setpoint, float *pid_output_ptr) {
 }
 
 void MID_CONTROL_PID_SetGains(float kp, float ki, float kd) {
-    my_pid.SetTunings(kp, ki, kd);
-    // Optionally save to EEPROM here if "SetGains" implies persistence, 
-    // but typically runtime tuning is volatile until explicitly saved.
-    // The directive didn't explicitly say "save on set", only "load on init".
+    internal_kd = kd;
+    my_pid.SetTunings(kp, ki, 0.0f); // Disable library D-term
 }
 
 float MID_CONTROL_PID_GetKp(void) {
@@ -196,7 +231,31 @@ float MID_CONTROL_PID_GetKi(void) {
 }
 
 float MID_CONTROL_PID_GetKd(void) {
-    return my_pid.GetKd();
+    return internal_kd;
+}
+
+void MID_CONTROL_PID_SetMinPower(float val) {
+    runtime_min_power = val;
+}
+
+float MID_CONTROL_PID_GetMinPower(void) {
+    return runtime_min_power;
+}
+
+void MID_CONTROL_PID_SetDeadband(float val) {
+    runtime_deadband = val;
+}
+
+float MID_CONTROL_PID_GetDeadband(void) {
+    return runtime_deadband;
+}
+
+void MID_CONTROL_PID_SetLpfAlpha(float val) {
+    runtime_lpf_alpha = val;
+}
+
+float MID_CONTROL_PID_GetLpfAlpha(void) {
+    return runtime_lpf_alpha;
 }
 
 PID_Status_t MID_CONTROL_PID_GetStatus(void) {
@@ -248,8 +307,10 @@ void MID_CONTROL_PID_Reset(void) {
     pid_input = 0.0f;
     pid_setpoint = 0.0f;
     
-    // Reset Filter
-    last_smoothed_input = 0.0f;
+    // Reset Custom D-State
+    last_pid_input = 0.0f;
+    last_derivative_rate = 0.0f;
+    last_step_micros = micros();
 
     my_pid.Reset();
 }

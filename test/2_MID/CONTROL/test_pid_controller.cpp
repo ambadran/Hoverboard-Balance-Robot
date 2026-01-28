@@ -41,6 +41,9 @@ void print_help() {
     Serial.println("  tVAL    : Set persistent Target Setpoint (e.g. t0.0)");
     Serial.println("  trVAL   : Set Auto-Run Duration in seconds (e.g. tr2.5)");
     Serial.println("  sdVAL   : Set START Delay in seconds (e.g. sd3.0)");
+    Serial.println("  mpVAL   : Set Min Power (e.g. mp60.0)");
+    Serial.println("  dbVAL   : Set Deadband (e.g. db0.15)");
+    Serial.println("  alVAL   : Set LPF Alpha (e.g. al0.6)");
     Serial.println("  dVAL    : Manual Motor Drive (e.g. d200). Only when Auto-Run OFF.");
     Serial.println("  mMODE   : PID Internal Mode (0=MANUAL, 1=AUTO, 2=TIMER)");
     Serial.println("  stVAL   : PID Sample Time in microseconds (e.g. st5000)");
@@ -154,7 +157,7 @@ void loop() {
                 // PID Loop = 200Hz. Print at ~10Hz (Every 20th step).
                 // 115200 baud cannot sustain 200Hz printing of long strings.
                 static uint8_t print_divider = 0;
-                if (++print_divider >= 20) {
+                if (++print_divider >= 60) {
                     print_divider = 0;
                     print_status();
                 }
@@ -200,6 +203,27 @@ void loop() {
             current_kd = valStr.substring(1).toFloat();
             MID_CONTROL_PID_SetGains(current_kp, current_ki, current_kd);
             Serial.printf("[INFO] Kd Set: %.2f (Current: P=%.2f I=%.2f D=%.2f)\r\n", current_kd, current_kp, current_ki, current_kd);
+            return;
+        }
+
+        if (cmdStr.startsWith("mp")) {
+            float val = valStr.substring(2).toFloat();
+            MID_CONTROL_PID_SetMinPower(val);
+            Serial.printf("[INFO] Min Power Set: %.2f\r\n", val);
+            return;
+        }
+
+        if (cmdStr.startsWith("db")) {
+            float val = valStr.substring(2).toFloat();
+            MID_CONTROL_PID_SetDeadband(val);
+            Serial.printf("[INFO] Deadband Set: %.2f\r\n", val);
+            return;
+        }
+
+        if (cmdStr.startsWith("al")) {
+            float val = valStr.substring(2).toFloat();
+            MID_CONTROL_PID_SetLpfAlpha(val);
+            Serial.printf("[INFO] LPF Alpha Set: %.2f\r\n", val);
             return;
         }
         
@@ -307,9 +331,14 @@ void loop() {
                 params.kp = current_kp;
                 params.ki = current_ki;
                 params.kd = current_kd;
+                params.min_power = MID_CONTROL_PID_GetMinPower();
+                params.deadband = MID_CONTROL_PID_GetDeadband();
+                params.lpf_alpha = MID_CONTROL_PID_GetLpfAlpha();
+                
                 HAL_EEPROM_SavePID(&params);
-                Serial.printf("[INFO] Saved Tunings to EEPROM: P=%.2f I=%.2f D=%.2f\r\n", 
-                    params.kp, params.ki, params.kd);
+                Serial.printf("[INFO] Saved ALL Tunings to EEPROM.\r\n");
+                Serial.printf("  PID: P=%.2f I=%.2f D=%.2f\r\n", params.kp, params.ki, params.kd);
+                Serial.printf("  CFG: MinP=%.2f Dead=%.2f Alpha=%.2f\r\n", params.min_power, params.deadband, params.lpf_alpha);
                 break;
             }
 
@@ -322,10 +351,15 @@ void loop() {
                 float active_kp = MID_CONTROL_PID_GetKp();
                 float active_ki = MID_CONTROL_PID_GetKi();
                 float active_kd = MID_CONTROL_PID_GetKd();
+                float active_mp = MID_CONTROL_PID_GetMinPower();
+                float active_db = MID_CONTROL_PID_GetDeadband();
+                float active_al = MID_CONTROL_PID_GetLpfAlpha();
 
                 Serial.println("[INFO] PID Gains Transparency Check:");
-                Serial.printf("  ACTIVE (RAM): Kp=%.2f, Ki=%.2f, Kd=%.2f\r\n", active_kp, active_ki, active_kd);
-                Serial.printf("  STORED (ROM): Kp=%.2f, Ki=%.2f, Kd=%.2f\r\n", stored.kp, stored.ki, stored.kd);
+                Serial.printf("  ACTIVE (RAM): Kp=%.2f, Ki=%.2f, Kd=%.2f | MinP=%.2f Dead=%.2f Alpha=%.2f\r\n", 
+                    active_kp, active_ki, active_kd, active_mp, active_db, active_al);
+                Serial.printf("  STORED (ROM): Kp=%.2f, Ki=%.2f, Kd=%.2f | MinP=%.2f Dead=%.2f Alpha=%.2f\r\n", 
+                    stored.kp, stored.ki, stored.kd, stored.min_power, stored.deadband, stored.lpf_alpha);
                 break;
             }
 

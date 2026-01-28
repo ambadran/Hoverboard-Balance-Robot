@@ -11,9 +11,12 @@ extern "C" {
 
 // EEPROM Address Map
 // Each float takes 4 bytes.
-#define EEPROM_ADDR_KP  0x00
-#define EEPROM_ADDR_KI  0x04
-#define EEPROM_ADDR_KD  0x08
+#define EEPROM_ADDR_KP         0x00
+#define EEPROM_ADDR_KI         0x04
+#define EEPROM_ADDR_KD         0x08
+#define EEPROM_ADDR_MIN_POWER  0x0C
+#define EEPROM_ADDR_DEADBAND   0x10
+#define EEPROM_ADDR_LPF_ALPHA  0x14
 
 /**
  * @brief Initialize the EEPROM (Flash-based) storage.
@@ -70,6 +73,42 @@ void HAL_EEPROM_SetKd(float val);
  * @return The current Kd value.
  */
 float HAL_EEPROM_GetKd(void);
+
+/**
+ * @brief Write and Commit the Min Power value to EEPROM.
+ * @param val The new Min Power value.
+ */
+void HAL_EEPROM_SetMinPower(float val);
+
+/**
+ * @brief Read the Min Power value from EEPROM.
+ * @return The current Min Power value.
+ */
+float HAL_EEPROM_GetMinPower(void);
+
+/**
+ * @brief Write and Commit the Deadband value to EEPROM.
+ * @param val The new Deadband value.
+ */
+void HAL_EEPROM_SetDeadband(float val);
+
+/**
+ * @brief Read the Deadband value from EEPROM.
+ * @return The current Deadband value.
+ */
+float HAL_EEPROM_GetDeadband(void);
+
+/**
+ * @brief Write and Commit the LPF Alpha value to EEPROM.
+ * @param val The new LPF Alpha value.
+ */
+void HAL_EEPROM_SetLpfAlpha(float val);
+
+/**
+ * @brief Read the LPF Alpha value from EEPROM.
+ * @return The current LPF Alpha value.
+ */
+float HAL_EEPROM_GetLpfAlpha(void);
 
 #ifdef __cplusplus
 }

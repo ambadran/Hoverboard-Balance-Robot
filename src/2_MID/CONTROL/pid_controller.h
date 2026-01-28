@@ -56,6 +56,16 @@ float MID_CONTROL_PID_GetKi(void);
  */
 float MID_CONTROL_PID_GetKd(void);
 
+// --- Advanced Tuning Accessors ---
+void MID_CONTROL_PID_SetMinPower(float val);
+float MID_CONTROL_PID_GetMinPower(void);
+
+void MID_CONTROL_PID_SetDeadband(float val);
+float MID_CONTROL_PID_GetDeadband(void);
+
+void MID_CONTROL_PID_SetLpfAlpha(float val);
+float MID_CONTROL_PID_GetLpfAlpha(void);
+
 /**
  * @brief Get the latest status of the PID controller.
  * 

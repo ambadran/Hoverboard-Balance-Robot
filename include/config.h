@@ -27,8 +27,8 @@
 #define PID_CALIBRATION_SAMPLES 100 // Number of samples to average for zero-offset
 #define PID_TILT_LIMIT_DEG 25.0f
 #define PID_MIN_POWER 60.0f
-#define PID_DEADBAND  0.30f
-#define PID_FILTER_ALPHA 1.0f // 1.0 = No Filter (Fixes Phase Lag), 0.1 = Heavy Filter
+#define PID_DEADBAND  0.20f
+#define PID_DERIVATIVE_LPF_ALPHA 0.6f // 1.0 = No Filter, 0.1 = Heavy Filter
 
 
 // Input Mapping
